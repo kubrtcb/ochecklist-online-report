@@ -1,4 +1,4 @@
-/src/config.py
+/src/config.yaml
 /*.html
 sample-data/kam-oblz_pohori.yaml
 /src/__pycache__/*

@@ -9,9 +9,9 @@ Získej online html report se změnami ze startu orientačního závodu pomocí 
 
 ## Potřebné kroky:
 1. Stáhni si repozitář
-2. Přejmenuj `example-config.py` na `config.py` a nastav si vlastní hodnoty pro ftp připojení
+2. Přejmenuj `example-config.yaml` na `config.yaml` a nastav si vlastní hodnoty pro ftp připojení a html soubor.
 3. Spusť si webový server v kořenovém adresáři `ochecklist-online-report`, např. `live-server`, který zajistí automatický reload reportu
-4. Zajisti pravidelné spouštění skriptu `process_ochecklist_report.py`. Ve Windows jde využít např. `Plánovač úloh`
+4. Zajisti pravidelné spouštění skriptu `process_ochecklist_report.py config.yaml`. Ve Windows jde využít např. `Plánovač úloh`
 
 ## V aplikaci
 1. Nastavit připojení k serveru přes FTP
@@ -31,9 +31,9 @@ Dej mi vědět jak to šlo.
 
 ## Steps:
 1. Clone repository
-2. Rename `example-config.py` to `config.py` and setup your credentials for ftp connection
+2. Rename `example-config.yaml` to `config.yaml` and setup your credentials for ftp connection. The configuration file name is the first argument of `process_ochecklist_report.py`
 3. Start webserver e.g. `live-server` in root folder `ochecklist-online-report`
-4. Schedule regular `process_ochecklist_report.py` script execution, in Windows use e.g. `Task Scheduler`
+4. Schedule regular `process_ochecklist_report.py config.yaml` script execution, in Windows use e.g. `Task Scheduler`
 
 ## Mobile app setup
 1. Setup FTP connection to the server
