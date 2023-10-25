@@ -4,6 +4,7 @@ import yaml
 from typing import Tuple
 from io import StringIO
 from config import ftp_server_credentials
+from config import ftp_upload_html
 from datetime import datetime
 
 """
@@ -14,7 +15,35 @@ Usage: All orienteering events with startlist in iof-xml v3.0
 def main() -> None:
     downloaded_file = download_file_from_ftp(**ftp_server_credentials)
     changes = process_downloaded_yaml(downloaded_file)
-    generate_html_report(changes)
+    generate_html_report(changes, ftp_upload_html['report_name'])
+    if(ftp_upload_html['enabled']):
+        upload_file_to_ftp(ftp_server_credentials['server'],ftp_server_credentials['login'], ftp_server_credentials['password'], ftp_upload_html['subfolder'], ftp_upload_html['report_name'])
+        print(f"HTML file " + ftp_upload_html['report_name'] + ".html has been uploaded to FTP server.\n")
+
+def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'online-report'):
+    """
+    Post file to ftp server
+    :param server: ftp server
+    :param login: Username
+    :param password: password
+    :param subfolder: downloaded file location
+    :param report_name: uploaded file name
+    """
+
+    # Connect to the FTP server
+    ftp = ftplib.FTP(server, login, password)
+
+    # Change to the directory where the file is located (if necessary)
+    ftp.cwd(subfolder)
+
+    # Open the local html file
+    file = open(report_name+".html",'rb')
+    # Store to FTP server
+    ftp.storbinary('STOR ' + report_name+".html", file)
+    # Cloce the local html file
+    file.close()
+    # Close the FTP connection
+    ftp.quit()
 
 def download_file_from_ftp(server, login, password, subfolder='/'):
     """
