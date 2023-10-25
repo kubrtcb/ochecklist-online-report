@@ -3,8 +3,6 @@ import ftplib
 import yaml
 from typing import Tuple
 from io import StringIO
-from config import ftp_server_credentials
-from config import ftp_upload_html
 from datetime import datetime
 
 """
@@ -13,12 +11,29 @@ Usage: All orienteering events with startlist in iof-xml v3.0
 """
 
 def main() -> None:
+    # parse config file name from argument[1]
+    config_file_name = parse_args()
+    print(f"Config file is " + config_file_name + ".\n")
+    # read YAML config file
+    try:
+        with open(config_file_name, "r") as yamlfile:
+            cfg = yaml.safe_load(yamlfile)
+    except Exception as inst:
+        print(inst)    # the exception type
+        exit()    
+    # set FTP server configuration    
+    ftp_server_credentials = cfg['ftp_server_credentials']
+    # set HTML output configuration
+    html_config = cfg['html_config']
+
     downloaded_file = download_file_from_ftp(**ftp_server_credentials)
     changes = process_downloaded_yaml(downloaded_file)
-    generate_html_report(changes, ftp_upload_html['report_name'])
-    if(ftp_upload_html['enabled']):
-        upload_file_to_ftp(ftp_server_credentials['server'],ftp_server_credentials['login'], ftp_server_credentials['password'], ftp_upload_html['subfolder'], ftp_upload_html['report_name'])
-        print(f"HTML file " + ftp_upload_html['report_name'] + ".html has been uploaded to FTP server.\n")
+    generate_html_report(changes, html_config['report_name'])
+    if(html_config['ftp_upload']):
+        upload_file_to_ftp(ftp_server_credentials['server'],ftp_server_credentials['login'], ftp_server_credentials['password'], html_config['subfolder'], html_config['report_name'])
+        print(f"HTML file " + html_config['report_name'] + ".html has been uploaded to FTP server.\n")
+    else:
+        print(f"HTML file " + html_config['report_name'] + ".html has been stored.\n")
 
 def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'online-report'):
     """
@@ -500,11 +515,11 @@ def parse_args() -> Tuple[int, str]:
     """
     Parse input arguments
     """
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 2:
         program = sys.argv[0]
-        print(f"Usage: {program} <config.py> <qe_event_id>", file=sys.stderr)
+        print(f"Usage: {program} <config_file>", file=sys.stderr)
         sys.exit(1)
-    return sys.argv[1], sys.argv[2]
+    return sys.argv[1]
 
 if __name__ == "__main__":
     main()
