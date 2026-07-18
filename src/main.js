@@ -1,25 +1,9 @@
-// Highlight solved rows with different background
-document.addEventListener("DOMContentLoaded", function () {
-  const checkboxes = document.querySelectorAll(".solved");
-  checkboxes.forEach(function (checkbox) {
-    checkbox.addEventListener("change", function () {
-      const row = this.closest("tr");
-      if (this.checked) {
-        row.classList.remove("row-unsolved");
-        row.classList.add("row-solved");
-      } else {
-        row.classList.remove("row-solved");
-        row.classList.add("row-unsolved");
-      }
-    }
-    );
-  });
-});
-
 // Get all the checkboxes with solved class
 const checkboxes = document.querySelectorAll('.solved');
 
-// Add event listener to each checkbox
+// Add event listener to each checkbox: persist the status and update the
+// row highlight through the same function used on initial page load, so
+// the highlight logic only lives in one place.
 checkboxes.forEach((checkbox) => {
   checkbox.addEventListener('change', (event) => {
     // Get the row element and the attributes
@@ -30,6 +14,9 @@ checkboxes.forEach((checkbox) => {
 
     // Save the table row status to local storage
     saveTableRowStatus(tableId, rowId, checked);
+
+    // Update the row highlight
+    setSolvedRowsBackground(checkbox);
   });
 });
 
