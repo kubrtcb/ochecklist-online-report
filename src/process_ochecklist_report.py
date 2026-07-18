@@ -1,5 +1,7 @@
 import sys
 import ftplib
+import html
+import re
 import yaml
 from typing import Tuple
 from io import StringIO
@@ -20,8 +22,8 @@ def main() -> None:
             cfg = yaml.safe_load(yamlfile)
     except Exception as inst:
         print(inst)    # the exception type
-        exit()    
-    # set FTP server configuration    
+        exit()
+    # set FTP server configuration
     ftp_server_credentials = cfg['ftp_server_credentials']
     # set HTML output configuration
     html_config = cfg['html_config']
@@ -115,24 +117,32 @@ def process_downloaded_yaml(downloaded_files):
 
     changes = {}
 
-    for file in downloaded_files:
-        # Load the contents of the downloaded YAML file
-        downloaded_data = yaml.safe_load(file[1])
+    # Parse every file up front and process them in chronological order (by
+    # their own 'Created' timestamp) rather than in whatever order the FTP
+    # server happens to list them in - the cumulative statistics below rely
+    # on files being processed oldest-first.
+    parsed_files = [(filename, yaml.safe_load(content)) for filename, content in downloaded_files]
+    parsed_files.sort(key=lambda item: item[1]['Created'])
 
+    for filename, downloaded_data in parsed_files:
         # Access report data
         report_data = downloaded_data['Data']
         for runner in report_data:
+            runner_info = runner['Runner']
             # Values
-            runner_id = runner['Runner']['Id'] if runner['Runner']['Id'] is not None else ''
-            runner_start_time = runner['Runner']['StartTime']
-            runner_class_name = runner['Runner']['ClassName']
-            runner_name = runner['Runner']['Name'] if runner['Runner']['Name'] is not None else ''
-            runner_club = runner['Runner']['Org'] if runner['Runner']['Org'] is not None else ''
-            runner_card = runner['Runner']['Card'] if runner['Runner']['Card'] is not None else ''
+            runner_id = runner_info['Id'] if runner_info['Id'] is not None else ''
+            # StartTime may be absent depending on the app/export version -
+            # fall back to None instead of raising KeyError so a single
+            # missing field doesn't abort processing of the whole report.
+            runner_start_time = runner_info.get('StartTime')
+            runner_class_name = runner_info['ClassName']
+            runner_name = runner_info['Name'] if runner_info['Name'] is not None else ''
+            runner_club = runner_info['Org'] if runner_info['Org'] is not None else ''
+            runner_card = runner_info['Card'] if runner_info['Card'] is not None else ''
 
             if runner['ChangeLog'] is not None:
                 # New card
-                if 'NewCard' in runner['Runner']:
+                if 'NewCard' in runner_info:
                     changes_cards.append([
                         runner_id,
                         runner_start_time,
@@ -141,10 +151,10 @@ def process_downloaded_yaml(downloaded_files):
                         runner_class_name,
                         runner_club,
                         runner_card,
-                        runner['Runner']['NewCard']
+                        runner_info['NewCard']
                     ])
                 # # DNS
-                if 'DNS' in runner['Runner']['StartStatus']:
+                if 'DNS' in runner_info['StartStatus']:
                     changes_dns.append([
                         runner_id,
                         runner_start_time,
@@ -155,7 +165,7 @@ def process_downloaded_yaml(downloaded_files):
                         runner_card
                     ])
                 # # Late start
-                if 'Late start' in runner['Runner']['StartStatus']:
+                if 'Late start' in runner_info['StartStatus']:
                     changes_late_start.append([
                         runner_id,
                         runner_start_time,
@@ -166,7 +176,7 @@ def process_downloaded_yaml(downloaded_files):
                         runner_card
                     ])
                 # # Comment
-                if 'Comment' in runner['Runner']:
+                if 'Comment' in runner_info:
                     changes_comments.append([
                         runner_id,
                         runner_start_time,
@@ -175,7 +185,7 @@ def process_downloaded_yaml(downloaded_files):
                         runner_class_name,
                         runner_club,
                         runner_card,
-                        runner['Runner']['Comment']
+                        runner_info['Comment']
                     ])
 
             # Store started runners
@@ -187,7 +197,7 @@ def process_downloaded_yaml(downloaded_files):
                  'card-changes': len(changes_cards),
                  'late-starts': len(changes_late_start),
                  'comments': len(changes_comments)}
-        changes_statistics.append([file[0], downloaded_data['Created'], downloaded_data['Creator'], downloaded_data['Version'], stats]);
+        changes_statistics.append([filename, downloaded_data['Created'], downloaded_data['Creator'], downloaded_data['Version'], stats]);
 
     # Store into the main dictionary
     changes['dns'] = changes_dns
@@ -206,6 +216,60 @@ def process_downloaded_yaml(downloaded_files):
 
     return changes
 
+def format_time(value, fmt='%H:%M:%S'):
+    """
+    Format a datetime for display, tolerating missing values (e.g. a runner
+    with no recorded StartTime) instead of raising an exception.
+    """
+    return value.strftime(fmt) if value else '-'
+
+def make_row_id(*parts):
+    """
+    Build a safe, unique HTML id from row-identifying values. Including the
+    runner id keeps rows unique even when two runners share a class and
+    start time; non-id-safe characters (spaces, diacritics, ...) coming
+    from free-text fields like class name are sanitized out.
+    """
+    raw = '-'.join(str(part) for part in parts if part not in (None, ''))
+    slug = re.sub(r'[^A-Za-z0-9_-]+', '_', raw) or 'unknown'
+    return f"row-{slug}"
+
+def render_table(table_id, header_defs, body_rows, empty_message, colspan):
+    """
+    Render a <table> with a sortable header row and the given body rows, or
+    a single 'no data' row when body_rows is empty. Shared by every changes
+    table so header/empty-state handling only needs to be correct in one
+    place.
+    :param table_id: id attribute of the table, also used by sortTable()
+    :param header_defs: list of (css_class, label) tuples for sortable columns
+    :param body_rows: list of already-built <tr>...</tr> HTML strings
+    :param empty_message: text shown when there is no data
+    :param colspan: colspan of the empty-state row
+    """
+    if not body_rows:
+        body = f"<tr><td class='nodata' colspan='{colspan}'>{html.escape(empty_message)}</td></tr>"
+    else:
+        header_cells = ''.join(
+            f'<th onclick="sortTable({index}, \'{table_id}\')" class=\'{css_class}\'>{html.escape(label)}</th>'
+            for index, (css_class, label) in enumerate(header_defs)
+        )
+        body = f"<tr>{header_cells}</tr>" + ''.join(body_rows)
+    return f"<table id='{table_id}'>{body}</table>"
+
+def render_change_row(row_id, cells):
+    """
+    Render one data row with a leading 'solved' checkbox cell. Every value
+    is HTML-escaped since it may contain free text entered by a starter
+    (name, club, comment) that must never be interpreted as markup.
+    :param row_id: sanitized id attribute for the <tr>
+    :param cells: list of (css_class, value) tuples rendered in order
+    """
+    tds = ''.join(
+        f"<td class='{css_class}'>{html.escape(str(value)) if value is not None else ''}</td>"
+        for css_class, value in cells
+    )
+    return f'<tr id="{row_id}"><td><input type="checkbox" class="solved"></td>{tds}</tr>'
+
 def generate_html_report(changes, report_name = 'online-report'):
     """
     Create html report with changes from the start in hrml format which is more readable.
@@ -221,29 +285,29 @@ def generate_html_report(changes, report_name = 'online-report'):
                 <meta name="keywords" content="ochecklist, orienteering, start, report">
                 <meta name="author" content="Lukas Kettner, OK Kamenice">
                 <meta http-equiv='Content-Type' content='text/html; charset=utf-8' />
-                <meta name="viewport" content="width=device-width, initial-scale=1.0" /> 
+                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
                 <!-- TODO: Can be used instead of live-server -->
-                <!--<meta http-equiv="refresh" content="30"> -->           
-                <link rel="stylesheet" href="src/style.css">                
+                <!--<meta http-equiv="refresh" content="30"> -->
+                <link rel="stylesheet" href="src/style.css">
                 <title>{heading}</title>
             </head>
             <body onload="sortTable(0, 'dataDNS'),sortTable(0, 'dataCards'),sortTable(0, 'dataLateStart'),sortTable(0, 'dataComments'),sortTable(0, 'dataStatistics')">
                 <header>
                     <h1>{heading}</h1>
                     <h2>{time_stamp}</h2>
-                </header>                
+                </header>
                 <!-- Did not start (DNS) -->
-                <section>{content_dns}</section>                
+                <section>{content_dns}</section>
 
                 <!-- Card canges -->
-                <section>{content_cards}</section>                
+                <section>{content_cards}</section>
 
                 <!-- Late starts -->
-                <section>{content_late_start}</section>                
+                <section>{content_late_start}</section>
 
                 <!-- Comments -->
                 <section>{content_comments}</section>
-                
+
                 <!-- Stats -->
                 <section>{content_statistics}</section>
 
@@ -256,245 +320,140 @@ def generate_html_report(changes, report_name = 'online-report'):
     '''
 
     # DNS
-    dns_changes_template = '''
-                    <p class="cat-title">
-                        <span class="category">Přehled neběžících závodníků a závodnic</span>
-                    </p>
-                    <table id='dataDNS'>                        
-                        {table_data}
-                    </table>
-                '''
-    dns_changes_data = ''
-    if len(changes['dns']) == 0:
-        dns_changes_data += '''
-        <tr>        
-            <td class='nodata' colspan='4'>Žadní neběžící závodníci a závodnice.</td>
-        </tr>
-        '''
-    else:
-        dns_changes_data += '''
-                <tr>
-                    <!-- <th class='id'>Id</th> -->
-                    <th onclick="sortTable(0, 'dataDNS')" class='solved'>Vyřešeno</th>
-                    <th onclick="sortTable(1, 'dataDNS')" class='timestamp'>Čas změny</th>
-                    <th onclick="sortTable(2, 'dataDNS')" class='timestamp'>Star. čas</th>
-                    <th onclick="sortTable(3, 'dataDNS')" class='name'>Jméno</th>
-                    <th onclick="sortTable(4, 'dataDNS')" class='class'>Kategorie</th>
-                    <th onclick="sortTable(5, 'dataDNS')" class='club'>Klub</th>
-                    <th onclick="sortTable(6, 'dataDNS')" class='card'>Čip</th>
-                </tr>
-                '''
-        for dns in changes['dns']:
-            dns_changes_data += '''            
-            <tr id='''+dns[1].strftime('%Y%m%d%H%M%S')+dns[4]+'''>
-                <!-- <td class='id'>'''+dns[0]+'''</td> -->
-                <td><input type="checkbox" class="solved"></td>
-                <td class='timestamp'>'''+dns[2].strftime('%H:%M:%S')+'''</td>
-                <td class='starttime'>'''+dns[1].strftime('%H:%M:%S')+'''</td>
-                <td class='name'>'''+dns[3]+'''</td>
-                <td class='class'>'''+dns[4]+'''</td>
-                <td class='club'>'''+dns[5]+'''</td>
-                <td class='card'>'''+str(dns[6])+'''</td>
-            </tr>
-            '''
-    dns_changes_html = dns_changes_template.format(table_data=dns_changes_data)
+    dns_headers = [
+        ('solved', 'Vyřešeno'),
+        ('timestamp', 'Čas změny'),
+        ('starttime', 'Star. čas'),
+        ('name', 'Jméno'),
+        ('class', 'Kategorie'),
+        ('club', 'Klub'),
+        ('card', 'Čip'),
+    ]
+    dns_rows = []
+    for dns in changes['dns']:
+        row_id = make_row_id(dns[0], dns[1], dns[4])
+        cells = [
+            ('timestamp', format_time(dns[2])),
+            ('starttime', format_time(dns[1])),
+            ('name', dns[3]),
+            ('class', dns[4]),
+            ('club', dns[5]),
+            ('card', dns[6]),
+        ]
+        dns_rows.append(render_change_row(row_id, cells))
+    dns_changes_html = render_table('dataDNS', dns_headers, dns_rows, 'Žadní neběžící závodníci a závodnice.', 4)
 
     # Cards
-    cards_changes_template = '''
-                    <p class="cat-title">
-                        <span class="category">Přehled změn čipů</span>
-                    </p>
-                    <table id='dataCards'>                        
-                        {table_data}
-                    </table>
-                '''
-    cards_changes_data = ''
-    if len(changes['changed_cards']) == 0:
-        cards_changes_data += '''
-        <tr>
-            <td class='nodata' colspan='5'>Žadné změny čipů.</td>
-        </tr>
-        '''
-    else:
-        cards_changes_data += '''
-                <tr>
-                    <!-- <th class='id'>Id</th> -->
-                    <th onclick="sortTable(0, 'dataCards')" class='solved'>Vyřešeno</th>
-                    <th onclick="sortTable(1, 'dataCards')" class='timestamp'>Čas změny</th>
-                    <th onclick="sortTable(2, 'dataCards')" class='starttime'>Star. čas</th>
-                    <th onclick="sortTable(3, 'dataCards')" class='name'>Jméno</th>
-                    <th onclick="sortTable(4, 'dataCards')" class='class'>Kategorie</th>
-                    <th onclick="sortTable(5, 'dataCards')" class='club'>Klub</th>
-                    <th onclick="sortTable(6, 'dataCards')" class='oldcard'>Starý čip</th>
-                    <th onclick="sortTable(7, 'dataCards')" class='card'>Nový čip</th>
-                </tr>
-                '''
-        for card in changes['changed_cards']:
-            cards_changes_data += '''            
-            <tr id='''+card[1].strftime('%Y%m%d%H%M%S')+card[4]+'''>
-                <!-- <td class='id'>'''+card[0]+'''</td> -->
-                <td><input type="checkbox" class="solved"></td>
-                <td class='timestamp'>'''+card[2].strftime('%H:%M:%S')+'''</td>
-                <td class='starttime'>'''+card[1].strftime('%H:%M:%S')+'''</td>
-                <td class='name'>'''+card[3]+'''</td>
-                <td class='class'>'''+card[4]+'''</td>
-                <td class='club'>'''+card[5]+'''</td>
-                <td class='oldcard'>'''+str(card[6])+'''</td>
-                <td class='card'>'''+str(card[7])+'''</td>
-            </tr>
-            '''
-    cards_changes_html = cards_changes_template.format(table_data=cards_changes_data)
+    cards_headers = [
+        ('solved', 'Vyřešeno'),
+        ('timestamp', 'Čas změny'),
+        ('starttime', 'Star. čas'),
+        ('name', 'Jméno'),
+        ('class', 'Kategorie'),
+        ('club', 'Klub'),
+        ('oldcard', 'Starý čip'),
+        ('card', 'Nový čip'),
+    ]
+    cards_rows = []
+    for card in changes['changed_cards']:
+        row_id = make_row_id(card[0], card[1], card[4])
+        cells = [
+            ('timestamp', format_time(card[2])),
+            ('starttime', format_time(card[1])),
+            ('name', card[3]),
+            ('class', card[4]),
+            ('club', card[5]),
+            ('oldcard', card[6]),
+            ('card', card[7]),
+        ]
+        cards_rows.append(render_change_row(row_id, cells))
+    cards_changes_html = render_table('dataCards', cards_headers, cards_rows, 'Žadné změny čipů.', 5)
 
     # Late starts
-    late_starts_changes_template = '''
-                    <p class="cat-title">
-                        <span class="category">Přehled opožděných startů</span>
-                    </p>
-                    <table id='dataLateStart'>                        
-                        {table_data}                        
-                    </table>
-                '''
-    late_starts_changes_data = ''
-    if len(changes['late_starts']) == 0:
-        late_starts_changes_data += '''
-        <tr>
-            <td class='nodata' colspan='4'>Žadné opožděné starty.</td>
-        </tr>
-        '''
-    else:
-        late_starts_changes_data += '''
-                <tr>
-                    <!-- <th class='id'>Id</th> -->
-                    <th onclick="sortTable(0, 'dataLateStart')" class='solved'>Vyřešeno</th>
-                    <th onclick="sortTable(1, 'dataLateStart')" class='timestamp'>Čas změny</th>
-                    <th onclick="sortTable(2, 'dataLateStart')" class='starttime'>Star. čas</th>
-                    <th onclick="sortTable(3, 'dataLateStart')" class='name'>Jméno</th>
-                    <th onclick="sortTable(4, 'dataLateStart')" class='class'>Kategorie</th>
-                    <th onclick="sortTable(5, 'dataLateStart')" class='club'>Klub</th>
-                    <th onclick="sortTable(6, 'dataLateStart')" class='card'>Čip</th>
-                </tr>
-                '''
-        for late_start in changes['late_starts']:
-            late_starts_changes_data += '''            
-            <tr id='''+late_start[1].strftime('%Y%m%d%H%M%S')+late_start[4]+'''>
-                <!-- <td class='id'>'''+late_start[0]+'''</td> -->
-                <td><input type="checkbox" class="solved"></td>
-                <td class='timestamp'>'''+late_start[2].strftime('%H:%M:%S')+'''</td>
-                <td class='starttime'>'''+late_start[1].strftime('%H:%M:%S')+'''</td>
-                <td class='name'>'''+late_start[3]+'''</td>
-                <td class='class'>'''+late_start[4]+'''</td>
-                <td class='club'>'''+late_start[5]+'''</td>
-                <td class='card'>'''+str(late_start[6])+'''</td>
-            </tr>
-            '''
-    late_starts_changes_html = late_starts_changes_template.format(table_data=late_starts_changes_data)
+    late_start_headers = [
+        ('solved', 'Vyřešeno'),
+        ('timestamp', 'Čas změny'),
+        ('starttime', 'Star. čas'),
+        ('name', 'Jméno'),
+        ('class', 'Kategorie'),
+        ('club', 'Klub'),
+        ('card', 'Čip'),
+    ]
+    late_start_rows = []
+    for late_start in changes['late_starts']:
+        row_id = make_row_id(late_start[0], late_start[1], late_start[4])
+        cells = [
+            ('timestamp', format_time(late_start[2])),
+            ('starttime', format_time(late_start[1])),
+            ('name', late_start[3]),
+            ('class', late_start[4]),
+            ('club', late_start[5]),
+            ('card', late_start[6]),
+        ]
+        late_start_rows.append(render_change_row(row_id, cells))
+    late_starts_changes_html = render_table('dataLateStart', late_start_headers, late_start_rows, 'Žadné opožděné starty.', 4)
 
     # Comments
-    comments_changes_template = '''
-                    <p class="cat-title">
-                        <span class="category">Přehled komentářů od startérů</span>
-                    </p>
-                    <table id='dataComments'>              
-                        {table_data}  
-                    </table>
-                '''
-    comments_changes_data = ''
-    if len(changes['comments']) == 0:
-        comments_changes_data += '''
-        <tr>
-            <td class='nodata' colspan='5'>Žádné nové komentáře.</td>
-        </tr>
-        '''
-    else:
-        comments_changes_data += '''
-                <tr>
-                    <!-- <th class='id'>Id</th> -->
-                    <th onclick="sortTable(0, 'dataComments')" class='solved'>Vyřešeno</th>
-                    <th onclick="sortTable(1, 'dataComments')" class='timestamp'>Čas změny</th>
-                    <th onclick="sortTable(2, 'dataComments')" class='starttime'>Star. čas</th>
-                    <th onclick="sortTable(3, 'dataComments')" class='name'>Jméno</th>
-                    <th onclick="sortTable(4, 'dataComments')" class='class'>Kategorie</th>
-                    <th onclick="sortTable(5, 'dataComments')" class='club'>Klub</th>
-                    <th onclick="sortTable(6, 'dataComments')" class='card'>Čip</th>
-                    <th onclick="sortTable(7, 'dataComments')" class='comment'>Komentář</th>
-                </tr> 
-                '''
-        for comment in changes['comments']:
-            comments_changes_data += '''            
-            <tr id='''+comment[1].strftime('%Y%m%d%H%M%S')+comment[4]+'''>
-                <!-- <td class='id'>''' + comment[0] + '''</td> -->
-                <td><input type="checkbox" class="solved"></td>
-                <td class='starttime'>''' + comment[1].strftime('%H:%M:%S') + '''</td>
-                <td class='timestamp'>''' + comment[2].strftime('%H:%M:%S') + '''</td>
-                <td class='name'>'''+comment[3]+'''</td>
-                <td class='class'>'''+comment[4]+'''</td>
-                <td class='club'>'''+comment[5]+'''</td>
-                <td class='card'>'''+str(comment[6])+'''</td>
-                <td class='comment'>'''+comment[7]+'''</td>
-            </tr>
-            '''
-    comments_changes_html = comments_changes_template.format(table_data=comments_changes_data)
+    comments_headers = [
+        ('solved', 'Vyřešeno'),
+        ('timestamp', 'Čas změny'),
+        ('starttime', 'Star. čas'),
+        ('name', 'Jméno'),
+        ('class', 'Kategorie'),
+        ('club', 'Klub'),
+        ('card', 'Čip'),
+        ('comment', 'Komentář'),
+    ]
+    comments_rows = []
+    for comment in changes['comments']:
+        row_id = make_row_id(comment[0], comment[1], comment[4])
+        cells = [
+            ('timestamp', format_time(comment[2])),
+            ('starttime', format_time(comment[1])),
+            ('name', comment[3]),
+            ('class', comment[4]),
+            ('club', comment[5]),
+            ('card', comment[6]),
+            ('comment', comment[7]),
+        ]
+        comments_rows.append(render_change_row(row_id, cells))
+    comments_changes_html = render_table('dataComments', comments_headers, comments_rows, 'Žádné nové komentáře.', 5)
 
     # Statistics
-    statistics_changes_template = '''
-                        <p class="cat-title">
-                            <span class="category">Statistiky</span>
-                        </p>
-                        <table id='dataStatistics'>              
-                            {table_data}  
-                        </table>
-                    '''
-    statistics_changes_data = ''
-    if len(changes['statistics']) == 0:
-        comments_changes_data += '''
-        <tr>
-            <td class='nodata' colspan='5'>Žádné statistiky.</td>
-        </tr>
-        '''
-    else:
-        statistics_changes_data += '''
-                <tr>
-                    <th onclick="sortTable(0, 'dataStatistics')" class='filename'>Název souboru</th>
-                    <th onclick="sortTable(1, 'dataStatistics')" class='created'>Datum vytvoření</th>
-                    <th onclick="sortTable(2, 'dataStatistics')" class='creator'>Verze aplikace</th>
-                    <th onclick="sortTable(3, 'dataStatistics')" class='version'>Verze reportu</th>
-                    <th onclick="sortTable(4, 'dataStatistics')" class='ok'>OK</th>
-                    <th onclick="sortTable(5, 'dataStatistics')" class='dns'>DNS</th>
-                    <th onclick="sortTable(6, 'dataStatistics')" class='new-cards'>New cards</th>
-                    <th onclick="sortTable(7, 'dataStatistics')" class='late-starts'>Late starts</th>
-                    <th onclick="sortTable(8, 'dataStatistics')" class='new-comments'>New comments</th>
-                </tr> 
-                '''
-        for i in range(0,len(changes['statistics'])):
-            if i == 0:
-                statistics_changes_data += '''            
-                <tr>
-                    <td class='file'>''' + changes['statistics'][i][0] + '''</td>
-                    <td class='created'>'''+changes['statistics'][i][1].strftime('%H:%M:%S')+'''</td>
-                    <td class='creator'>'''+changes['statistics'][i][2]+'''</td>
-                    <td class='version'>'''+str(changes['statistics'][i][3])+'''</td>
-                    <td class='ok'>'''+str(changes['statistics'][i][4]['ok'])+'''</td>
-                    <td class='dns'>'''+str(changes['statistics'][i][4]['dns'])+'''</td>
-                    <td class='new-cards'>'''+str(changes['statistics'][i][4]['card-changes'])+'''</td>
-                    <td class='late-starts'>'''+str(changes['statistics'][i][4]['late-starts'])+'''</td>
-                    <td class='new-comments'>'''+str(changes['statistics'][i][4]['comments'])+'''</td>
-                </tr>
-                '''
-            else:
-                statistics_changes_data += '''            
-                <tr>
-                    <td class='file'>''' + changes['statistics'][i][0] + '''</td>
-                    <td class='created'>''' + changes['statistics'][i][1].strftime('%H:%M:%S') + '''</td>
-                    <td class='creator'>''' + changes['statistics'][i][2] + '''</td>
-                    <td class='version'>''' + str(changes['statistics'][i][3]) + '''</td>
-                    <td class='ok'>''' + str(changes['statistics'][i][4]['ok']-changes['statistics'][i-1][4]['ok']) + '''</td>
-                    <td class='dns'>''' + str(changes['statistics'][i][4]['dns']-changes['statistics'][i-1][4]['dns']) + '''</td>
-                    <td class='new-cards'>''' + str(changes['statistics'][i][4]['card-changes']-changes['statistics'][i-1][4]['card-changes']) + '''</td>
-                    <td class='late-starts'>''' + str(changes['statistics'][i][4]['late-starts']-changes['statistics'][i-1][4]['late-starts']) + '''</td>
-                    <td class='new-comments'>''' + str(changes['statistics'][i][4]['comments']-changes['statistics'][i-1][4]['comments']) + '''</td>
-                </tr>
-                '''
-    statistics_changes_html = statistics_changes_template.format(table_data=statistics_changes_data)
+    statistics_headers = [
+        ('filename', 'Název souboru'),
+        ('created', 'Datum vytvoření'),
+        ('creator', 'Verze aplikace'),
+        ('version', 'Verze reportu'),
+        ('ok', 'OK'),
+        ('dns', 'DNS'),
+        ('new-cards', 'New cards'),
+        ('late-starts', 'Late starts'),
+        ('new-comments', 'New comments'),
+    ]
+    statistics_rows = []
+    previous_stats = None
+    for filename, created, creator, version, stats in changes['statistics']:
+        display_stats = stats if previous_stats is None else {
+            key: value - previous_stats[key] for key, value in stats.items()
+        }
+        cells = [
+            ('file', filename),
+            ('created', format_time(created)),
+            ('creator', creator),
+            ('version', version),
+            ('ok', display_stats['ok']),
+            ('dns', display_stats['dns']),
+            ('new-cards', display_stats['card-changes']),
+            ('late-starts', display_stats['late-starts']),
+            ('new-comments', display_stats['comments']),
+        ]
+        tds = ''.join(
+            f"<td class='{css_class}'>{html.escape(str(value))}</td>" for css_class, value in cells
+        )
+        statistics_rows.append(f'<tr>{tds}</tr>')
+        previous_stats = stats
+    statistics_changes_html = render_table('dataStatistics', statistics_headers, statistics_rows, 'Žádné statistiky.', 5)
 
     # Generate html report
     html_file = html_file_template.format(heading='O Checklist report',
