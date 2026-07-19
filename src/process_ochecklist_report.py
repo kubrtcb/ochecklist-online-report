@@ -275,34 +275,7 @@ def render_change_row(row_id, cells):
     )
     return f'<tr id="{row_id}"><td><input type="checkbox" class="solved"></td>{tds}</tr>'
 
-def resource_path(filename):
-    """
-    Resolve the path to a bundled report asset (style.css, main.js), both
-    when running from source (assets live next to this script) and when
-    running as a PyInstaller-frozen executable (assets are unpacked into a
-    temporary 'assets' folder alongside the bundle).
-    """
-    if getattr(sys, 'frozen', False):
-        base_path = os.path.join(sys._MEIPASS, 'assets')
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, filename)
-
-def ensure_report_assets(output_dir):
-    """
-    Make sure style.css and main.js are available next to the generated
-    report at <output_dir>/src/, since the report links to them with a
-    relative path. Existing files are left untouched so local
-    customizations survive repeated report generation.
-    """
-    assets_dir = os.path.join(output_dir, 'src')
-    os.makedirs(assets_dir, exist_ok=True)
-    for asset in ('style.css', 'main.js'):
-        destination = os.path.join(assets_dir, asset)
-        if not os.path.exists(destination):
-            shutil.copyfile(resource_path(asset), destination)
-
-def generate_html_report(changes, report_name = 'online-report', output_dir = '.'):
+def generate_html_report(changes, report_name = 'online-report'):
     """
     Create html report with changes from the start in hrml format which is more readable.
     :param changes:
