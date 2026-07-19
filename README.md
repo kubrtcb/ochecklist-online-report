@@ -1,7 +1,20 @@
 # O Checklist online report
 Získej online html report se změnami ze startu orientačního závodu pomocí mobilní aplikace [O Checklist](https://play.google.com/store/apps/details?id=se.tg3.startlist) od [Anderse Löfgrena](<al@stigning.se>) a nahrávání na server přes FTP.
 
-## Požadavky
+## Samostatná aplikace pro Windows
+
+Pro Windows existuje grafická aplikace `OChecklistReport.exe`, která nevyžaduje instalaci Pythonu ani nastavování Plánovače úloh:
+
+1. Stáhni si `OChecklistReport.exe`:
+   - z GitHub Actions běhu ["Build Windows app"](../../actions/workflows/build-windows.yml) (záložka Artifacts), nebo
+   - sestav si ho lokálně na Windows spuštěním `build_windows.bat` (vyžaduje nainstalovaný Python) - výsledný soubor najdeš v `dist\OChecklistReport.exe`.
+2. Spusť `OChecklistReport.exe` a vyplň přihlašovací údaje k FTP serveru a nastavení reportu.
+3. Klikni na **Uložit nastavení** a poté buď na **Spustit nyní** (jednorázové vygenerování reportu), nebo na **Spustit automatické plánování** (aplikace pak sama pravidelně stahuje data a report aktualizuje na pozadí, dokud ji nezavřeš nebo plánování nezastavíš).
+4. Vygenerovaný report otevřeš tlačítkem **Otevřít report**, nebo ho najdeš ve zvolené výstupní složce (výchozí je `%APPDATA%\OChecklistReport\reports`).
+
+Nastavení se ukládá do `%APPDATA%\OChecklistReport\config.yaml`.
+
+## Požadavky (skript pro pokročilé/Linux/macOS)
 - Přístup na server přes FTP
 - Nainstalovaný [Python](https://www.python.org/)
 - Nainstalovaný [Node.js](https://nodejs.org/en) (pro `live-server`)
@@ -24,7 +37,20 @@ Dej mi vědět jak to šlo.
 # EN:
  Get online html report with changes from the start of orienteering event for manual updates in the db using mobile app [O Checklist](https://play.google.com/store/apps/details?id=se.tg3.startlist) by [Anders Löfgren](<al@stigning.se>) and server upload via FTP. 
 
-## Requirements
+## Standalone Windows app
+
+A GUI app `OChecklistReport.exe` is available for Windows, requiring neither a Python install nor a Task Scheduler entry:
+
+1. Get `OChecklistReport.exe`:
+   - from the ["Build Windows app"](../../actions/workflows/build-windows.yml) GitHub Actions run (Artifacts tab), or
+   - build it locally on Windows by running `build_windows.bat` (requires Python installed) - the result is written to `dist\OChecklistReport.exe`.
+2. Launch `OChecklistReport.exe` and fill in your FTP credentials and report settings.
+3. Click **Uložit nastavení** (Save settings), then either **Spustit nyní** (Run now) for a one-off report, or **Spustit automatické plánování** (Start automatic scheduling) to have the app poll the FTP server and refresh the report in the background until you stop it or close the window.
+4. Open the generated report with the **Otevřít report** (Open report) button, or find it in the chosen output folder (defaults to `%APPDATA%\OChecklistReport\reports`).
+
+Settings are stored in `%APPDATA%\OChecklistReport\config.yaml`.
+
+## Requirements (advanced script use / Linux / macOS)
 - Credential to the connection to the server
 - Installed [Python](https://www.python.org/)
 - Installed [Node.js](https://nodejs.org/en) (for `live-server`)

@@ -8,5 +8,7 @@ ftp_server_credentials:
 
 html_config:
     report_name: online-report
+    # output_dir is optional - defaults to the current directory when omitted
+    output_dir: .
     ftp_upload: False
     subfolder: /

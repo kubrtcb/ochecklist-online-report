@@ -1,3 +1,5 @@
+import os
+import shutil
 import sys
 import ftplib
 import html
@@ -28,16 +30,18 @@ def main() -> None:
     # set HTML output configuration
     html_config = cfg['html_config']
 
+    output_dir = html_config.get('output_dir', '.')
+
     downloaded_file = download_file_from_ftp(**ftp_server_credentials)
     changes = process_downloaded_yaml(downloaded_file)
-    generate_html_report(changes, html_config['report_name'])
+    generate_html_report(changes, html_config['report_name'], output_dir)
     if(html_config['ftp_upload']):
-        upload_file_to_ftp(ftp_server_credentials['server'],ftp_server_credentials['login'], ftp_server_credentials['password'], html_config['subfolder'], html_config['report_name'])
+        upload_file_to_ftp(ftp_server_credentials['server'],ftp_server_credentials['login'], ftp_server_credentials['password'], html_config['subfolder'], html_config['report_name'], output_dir)
         print(f"HTML file " + html_config['report_name'] + ".html has been uploaded to FTP server.\n")
     else:
         print(f"HTML file " + html_config['report_name'] + ".html has been stored.\n")
 
-def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'online-report'):
+def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'online-report', output_dir='.'):
     """
     Post file to ftp server
     :param server: ftp server
@@ -45,6 +49,7 @@ def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'o
     :param password: password
     :param subfolder: downloaded file location
     :param report_name: uploaded file name
+    :param output_dir: local directory the report was written to
     """
 
     # Connect to the FTP server
@@ -54,7 +59,7 @@ def upload_file_to_ftp(server , login, password, subfolder='/', report_name = 'o
     ftp.cwd(subfolder)
 
     # Open the local html file
-    file = open(report_name+".html",'rb')
+    file = open(os.path.join(output_dir, report_name+".html"),'rb')
     # Store to FTP server
     ftp.storbinary('STOR ' + report_name+".html", file)
     # Cloce the local html file
@@ -274,8 +279,12 @@ def generate_html_report(changes, report_name = 'online-report'):
     """
     Create html report with changes from the start in hrml format which is more readable.
     :param changes:
+    :param report_name: base file name (without extension) of the generated report
+    :param output_dir: directory the report (and its src/ assets) is written to
     :return: html_file
     """
+
+    ensure_report_assets(output_dir)
 
     html_file_template = '''
         <!DOCTYPE html>
@@ -464,7 +473,8 @@ def generate_html_report(changes, report_name = 'online-report'):
                                           content_comments=comments_changes_html,
                                           content_statistics=statistics_changes_html)
     # Write the HTML to a file
-    with open(report_name+".html", "w", encoding='utf-8') as f:
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, report_name+".html"), "w", encoding='utf-8') as f:
         f.write(html_file)
 
     return html_file

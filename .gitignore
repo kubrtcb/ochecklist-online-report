@@ -2,3 +2,6 @@
 /*.html
 sample-data/kam-oblz_pohori.yaml
 /src/__pycache__/*
+/build/
+/dist/
+*.spec
